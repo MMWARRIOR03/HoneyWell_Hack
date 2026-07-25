@@ -9,10 +9,12 @@ __version__ = "0.1.0"
 __author__ = "SynapseEnergy Team"
 
 from .models import ZoneState, ControlDecision, SafetyConfig, LLMConfig
+from .structured_logger import StructuredLogger
 
 __all__ = [
     "ZoneState",
     "ControlDecision",
     "SafetyConfig",
     "LLMConfig",
+    "StructuredLogger",
 ]
