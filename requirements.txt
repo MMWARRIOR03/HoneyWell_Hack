@@ -1,0 +1,25 @@
+# Eco-Loop Building Agents - Python Dependencies
+
+# EnergyPlus Python API for building simulation integration
+# Note: pyenergyplus is available from conda-forge or EnergyPlus installation
+# For development without EnergyPlus, comment this line out
+# pyenergyplus>=24.1.0
+
+# HTTP client for LLM endpoint communication
+requests>=2.31.0
+
+# Anthropic Model Context Protocol SDK for MCP server implementation
+# Note: Install with: pip install mcp
+mcp>=0.9.0
+
+# Data visualization for comparison dashboard
+matplotlib>=3.8.0
+
+# Configuration file parsing
+pyyaml>=6.0.1
+
+# Additional utilities
+python-dateutil>=2.8.2
+
+# Testing framework
+pytest>=7.4.0
