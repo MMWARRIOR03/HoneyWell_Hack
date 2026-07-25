@@ -8,13 +8,26 @@ building energy simulation and an open-source LLM for autonomous HVAC optimizati
 __version__ = "0.1.0"
 __author__ = "SynapseEnergy Team"
 
-from .models import ZoneState, ControlDecision, SafetyConfig, LLMConfig
+from .models import (
+    ZoneState,
+    ControlDecision,
+    SafetyConfig,
+    LLMConfig,
+    SystemHealthState,
+    LLMResponse
+)
 from .structured_logger import StructuredLogger
+from .governor import SafetyGovernor
+from .baseline_controller import BaselineController
 
 __all__ = [
     "ZoneState",
     "ControlDecision",
     "SafetyConfig",
     "LLMConfig",
+    "SystemHealthState",
+    "LLMResponse",
     "StructuredLogger",
+    "SafetyGovernor",
+    "BaselineController",
 ]
