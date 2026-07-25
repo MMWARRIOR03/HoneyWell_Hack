@@ -1,9 +1,15 @@
 # Eco-Loop Building Agents - Python Dependencies
 
 # EnergyPlus Python API for building simulation integration
-# Note: pyenergyplus is available from conda-forge or EnergyPlus installation
-# For development without EnergyPlus, comment this line out
+# Note: pyenergyplus requires EnergyPlus installation (https://energyplus.net/)
+# Install EnergyPlus first, then pyenergyplus will be available
+# For development/testing without EnergyPlus, the system uses graceful fallbacks
+# Uncomment when EnergyPlus is installed:
 # pyenergyplus>=24.1.0
+
+# Alternative: For testing without full EnergyPlus installation, consider:
+# - Mock testing (unit tests use mocks for EnergyPlus API)
+# - Simplified simulation mode (demo mode without actual thermal calculations)
 
 # HTTP client for LLM endpoint communication
 requests>=2.31.0

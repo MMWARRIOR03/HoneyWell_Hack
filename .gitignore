@@ -8,6 +8,7 @@ build/
 develop-eggs/
 dist/
 downloads/
+.kiro/
 eggs/
 .eggs/
 lib/

@@ -14,11 +14,16 @@ from .models import (
     SafetyConfig,
     LLMConfig,
     SystemHealthState,
-    LLMResponse
+    LLMResponse,
+    FaultConfig
 )
 from .structured_logger import StructuredLogger
 from .governor import SafetyGovernor
 from .baseline_controller import BaselineController
+from .mcp_server import BuildingControlMCPServer
+from .orchestration_loop import OrchestrationLoop
+from .dashboard import ComparisonDashboard, SimulationResults
+from .fault_injection import FaultInjector, FaultInjectionWrapper, with_fault_injection
 
 __all__ = [
     "ZoneState",
@@ -27,7 +32,15 @@ __all__ = [
     "LLMConfig",
     "SystemHealthState",
     "LLMResponse",
+    "FaultConfig",
     "StructuredLogger",
     "SafetyGovernor",
     "BaselineController",
+    "BuildingControlMCPServer",
+    "OrchestrationLoop",
+    "ComparisonDashboard",
+    "SimulationResults",
+    "FaultInjector",
+    "FaultInjectionWrapper",
+    "with_fault_injection",
 ]

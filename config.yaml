@@ -15,10 +15,10 @@ llm:
   # Base URL for Ollama API endpoint
   # Default for local: http://localhost:11434
   # For Colab: Update to your ngrok or Colab forwarding URL
-  endpoint_url: "http://localhost:11434"
+  endpoint_url: "https://scales-exceptional-witnesses-dimension.trycloudflare.com"
   
   # Model name to use for inference
-  model_name: "qwen2.5:7b-instruct"
+  model_name: "qwen2.5:7b"
   
   # Maximum time to wait for LLM response before timeout (seconds)
   timeout_seconds: 30.0
@@ -69,7 +69,7 @@ simulation:
   
   # Path to EPW (EnergyPlus Weather) file
   # Relative to project root or absolute path
-  epw_path: "./weather/IND_New.Delhi.432950_ISHRAE.epw"
+  epw_path: "./weather/IND_New.Delhi.421820_ISHRAE.epw"
   
   # Hours between control decision cycles
   # Recommended: 1 (hourly decisions)
