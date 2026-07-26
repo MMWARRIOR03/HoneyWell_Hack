@@ -15,7 +15,7 @@ llm:
   # Base URL for Ollama API endpoint
   # Default for local: http://localhost:11434
   # For Colab: Update to your ngrok or Colab forwarding URL
-  endpoint_url: "https://scales-exceptional-witnesses-dimension.trycloudflare.com"
+  endpoint_url: "https://configured-practice-dylan-reduce.trycloudflare.com"
   
   # Model name to use for inference
   model_name: "qwen2.5:7b"

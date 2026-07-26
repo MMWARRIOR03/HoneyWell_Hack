@@ -61,32 +61,40 @@ class EnergyPlusBridge:
         self._actuator_handles: Dict[str, Dict[str, int]] = {}
         self._output_variable_handles: Dict[str, Dict[str, int]] = {}
         self._initialized = False
+        self._api = None  # Store API reference for v26.1 compatibility
     
-    def register_callbacks(self, state: Any) -> None:
+    def register_callbacks(self, api: Any, state: Any) -> None:
         """
         Register EnergyPlus callback handlers.
         
         This method registers the zone timestep callback that will be invoked
         by EnergyPlus on every timestep after heat balance initialization.
-        The callback is registered using pyenergyplus API:
-        callback_begin_zone_timestep_after_init_heat_balance
+        
+        For EnergyPlus v26.1+, callbacks are registered through the API object
+        with the state handle passed as a parameter.
         
         Args:
-            state: EnergyPlus state object from pyenergyplus
+            api: EnergyPlus API object from pyenergyplus.api.EnergyPlusAPI
+            state: EnergyPlus state handle (integer in v26.1+)
             
         Exception Safety:
             All exceptions caught and logged without propagation to EnergyPlus
         """
         try:
-            # Register the zone timestep callback
-            state.callback_begin_zone_timestep_after_init_heat_balance(
+            # Store API reference for later use
+            self._api = api
+            
+            # Register the zone timestep callback using v26.1+ API
+            api.runtime.callback_begin_zone_timestep_after_init_heat_balance(
+                state,
                 self._callback_zone_timestep
             )
             
             self.logger.info(
                 "ep_bridge",
                 "callbacks_registered",
-                callback_type="begin_zone_timestep_after_init_heat_balance"
+                callback_type="begin_zone_timestep_after_init_heat_balance",
+                api_version="v26.1+"
             )
             
         except Exception as e:
