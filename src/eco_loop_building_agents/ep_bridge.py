@@ -62,6 +62,7 @@ class EnergyPlusBridge:
         self._output_variable_handles: Dict[str, Dict[str, int]] = {}
         self._initialized = False
         self._api = None  # Store API reference for v26.1 compatibility
+        self._api_ready_wait_logged = False
     
     def register_callbacks(self, api: Any, state: Any) -> None:
         """
@@ -124,6 +125,19 @@ class EnergyPlusBridge:
         try:
             # Initialize handles on first callback
             if not self._initialized:
+                # This callback is also invoked during sizing.  At that point
+                # EnergyPlus has not necessarily registered all data-exchange
+                # points yet, so every handle lookup can legitimately return
+                # -1.  Do not treat that transient state as initialization.
+                if not self._api.exchange.api_data_fully_ready(state):
+                    if not self._api_ready_wait_logged:
+                        self.logger.info(
+                            "ep_bridge",
+                            "waiting_for_api_data",
+                            note="Deferring handle lookup until EnergyPlus data exchange is ready"
+                        )
+                        self._api_ready_wait_logged = True
+                    return
                 self._initialize_handles(state)
             
             # Extract zone states and write to cache
@@ -162,6 +176,12 @@ Plus state handle (integer in v26.1+)
             Exception: If critical handles cannot be obtained (logged and re-raised)
         """
         try:
+            # Initialization may be retried after a transient failure; clear
+            # any partial data before rebuilding the handle maps.
+            self._zone_ids.clear()
+            self._actuator_handles.clear()
+            self._output_variable_handles.clear()
+
             # For EnergyPlus v26.1+, state is just an integer handle
             # We need to use the API's data_transfer methods to get zone information
             # Instead of accessing state.dataGlobal directly
@@ -170,14 +190,16 @@ Plus state handle (integer in v26.1+)
             # This is a workaround - we'll discover zones from the building model
             # For now, hardcode common zone names from ASHRAE 901 model
             
-            # Common zone names in ASHRAE 901 Large Office baseline model
-            # This is a temporary solution - ideally would query from EnergyPlus
+            # Zone names from ASHRAE 901 Large Office baseline model (New Delhi)
+            # Extracted from models/baseline.idf - must match exact capitalization
             default_zones = [
-                "BASEMENT",
-                "CORE_BOTTOM", "CORE_MID", "CORE_TOP",
-                "PERIMETER_BOT_ZN_1", "PERIMETER_BOT_ZN_2", "PERIMETER_BOT_ZN_3", "PERIMETER_BOT_ZN_4",
-                "PERIMETER_MID_ZN_1", "PERIMETER_MID_ZN_2", "PERIMETER_MID_ZN_3", "PERIMETER_MID_ZN_4",
-                "PERIMETER_TOP_ZN_1", "PERIMETER_TOP_ZN_2", "PERIMETER_TOP_ZN_3", "PERIMETER_TOP_ZN_4"
+                "Basement",
+                "Core_bottom", "Core_mid", "Core_top",
+                "Perimeter_bot_ZN_1", "Perimeter_bot_ZN_2", "Perimeter_bot_ZN_3", "Perimeter_bot_ZN_4",
+                "Perimeter_mid_ZN_1", "Perimeter_mid_ZN_2", "Perimeter_mid_ZN_3", "Perimeter_mid_ZN_4",
+                "Perimeter_top_ZN_1", "Perimeter_top_ZN_2", "Perimeter_top_ZN_3", "Perimeter_top_ZN_4",
+                "GroundFloor_Plenum", "MidFloor_Plenum", "TopFloor_Plenum",
+                "DataCenter_bot_ZN_6", "DataCenter_mid_ZN_6", "DataCenter_top_ZN_6", "DataCenter_basement_ZN_6"
             ]
             
             self.logger.info(
@@ -234,6 +256,11 @@ Plus state handle (integer in v26.1+)
                             "Zone Thermal Comfort Fanger Model PMV",
                             zone_name
                         )
+                        occupancy_handle = self._api.exchange.get_variable_handle(
+                            state,
+                            "Zone People Occupant Count",
+                            zone_name
+                        )
                         
                         if temp_handle != -1:
                             self._output_variable_handles[zone_name]["temperature"] = temp_handle
@@ -241,6 +268,8 @@ Plus state handle (integer in v26.1+)
                             self._output_variable_handles[zone_name]["humidity"] = humidity_handle
                         if pmv_handle != -1:
                             self._output_variable_handles[zone_name]["pmv"] = pmv_handle
+                        if occupancy_handle != -1:
+                            self._output_variable_handles[zone_name]["occupancy"] = occupancy_handle
                         
                         self.logger.info(
                             "ep_bridge",
@@ -250,7 +279,8 @@ Plus state handle (integer in v26.1+)
                             has_cooling=cooling_handle != -1,
                             has_temp=temp_handle != -1,
                             has_humidity=humidity_handle != -1,
-                            has_pmv=pmv_handle != -1
+                            has_pmv=pmv_handle != -1,
+                            has_occupancy=occupancy_handle != -1
                         )
                 except Exception as e:
                     # Zone might not exist in this model, skip it
@@ -306,8 +336,10 @@ Plus state handle (integer in v26.1+)
                 # Convert from percentage to fraction
                 humidity = humidity_percent / 100.0
                 
-                # Default occupancy to 0 if not available
-                occupancy = 0
+                occupancy = int(round(self._api.exchange.get_variable_value(
+                    state,
+                    self._output_variable_handles[zone_id]["occupancy"]
+                ))) if "occupancy" in self._output_variable_handles[zone_id] else 0
                 
                 pmv = self._api.exchange.get_variable_value(
                     state,

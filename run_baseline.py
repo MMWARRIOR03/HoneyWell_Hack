@@ -21,8 +21,6 @@ Example:
 
 import argparse
 import sys
-import threading
-import time
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Optional
@@ -70,7 +68,7 @@ class BaselineRunner:
         controller: Rule-based controller for all control decisions
         bridge: EnergyPlus integration bridge
         logger: Structured logger for all events
-        _decision_thread: Background thread for hourly decision cycles
+        _decision_callback: EnergyPlus callback that drives simulated-time decisions
         _simulation_active: Flag to control decision loop
         _decision_cycle_count: Counter for completed decision cycles
     """
@@ -136,11 +134,10 @@ class BaselineRunner:
         )
         
         # Initialize state tracking
-        self._decision_thread: Optional[threading.Thread] = None
         self._simulation_active = False
         self._decision_cycle_count = 0
         self._simulation_start_time: Optional[datetime] = None
-        self._last_hour_processed = -1
+        self._last_decision_interval: Optional[tuple[int, int, int]] = None
         
         self.logger.info(
             component="baseline_runner",
@@ -160,7 +157,7 @@ class BaselineRunner:
         1. Validates IDF and EPW file paths
         2. Creates EnergyPlus API instance
         3. Registers callbacks via EnergyPlusBridge
-        4. Starts decision cycle thread
+        4. Registers the simulated-time decision callback
         5. Runs EnergyPlus simulation
         6. Waits for completion and logs results
         
@@ -209,19 +206,21 @@ class BaselineRunner:
             
             # Register EnergyPlus callbacks
             self.bridge.register_callbacks(api, state)
-            
-            # Start decision cycle thread
-            self._simulation_active = True
-            self._decision_thread = threading.Thread(
-                target=self._decision_loop,
-                args=(state,),
-                daemon=True
+
+            # Schedule decisions from EnergyPlus simulation time, not wall-clock
+            # time.  A full annual simulation can finish in about a minute, so a
+            # background thread that checks datetime.now() only sees one hour.
+            api.runtime.callback_end_zone_timestep_after_zone_reporting(
+                state,
+                self._decision_callback
             )
-            self._decision_thread.start()
+
+            self._simulation_active = True
             
             self.logger.info(
                 component="baseline_runner",
-                event="decision_thread_started",
+                event="decision_callback_registered",
+                callback_type="end_zone_timestep_after_zone_reporting",
                 interval_hours=self.config.simulation.decision_interval_hours
             )
             
@@ -270,75 +269,66 @@ class BaselineRunner:
             raise RuntimeError(f"Baseline simulation failed: {str(e)}") from e
         
         finally:
-            # Wait for decision thread to finish
-            if self._decision_thread and self._decision_thread.is_alive():
-                self._decision_thread.join(timeout=5.0)
-            
             # Log simulation end
             self._log_simulation_end()
             
             # Print summary
             self._print_summary()
     
-    def _decision_loop(self, state) -> None:
+    def _decision_callback(self, state) -> None:
         """
-        Background thread that executes hourly decision cycles.
-        
-        This thread runs concurrently with the EnergyPlus simulation and
-        executes control decision cycles at hourly intervals. It reads zone
-        states from the cache (populated by EnergyPlus callbacks), generates
-        rule-based decisions via BaselineController, and writes them back
-        to the cache for application by callbacks.
+        Execute a decision cycle at each configured EnergyPlus time interval.
+
+        The callback runs at the end of every zone timestep, after the bridge
+        has cached the zone state.  It uses EnergyPlus's simulated calendar,
+        rather than wall-clock time, so fast annual runs still receive one
+        decision per simulated hour.
         
         Args:
             state: EnergyPlus state object for accessing simulation time
             
-        Thread Safety:
-            Accesses shared DecisionCache which is thread-safe.
+        Exceptions are contained so a controller failure cannot terminate the
+        EnergyPlus simulation.
         """
-        self.logger.info(
-            component="baseline_runner",
-            event="decision_loop_started"
-        )
-        
-        while self._simulation_active:
-            try:
-                # Wait for bridge to be initialized
-                if not self.bridge.is_initialized():
-                    time.sleep(0.1)
-                    continue
-                
-                # Get current simulation hour
-                # Note: In production, this would read from EnergyPlus state
-                # For now, we check the zone states timestamp
-                zone_states = self.cache.read_zone_states()
-                
-                if not zone_states:
-                    # No zone states available yet
-                    time.sleep(1.0)
-                    continue
-                
-                # Get simulation time from first zone state
-                simulation_time = next(iter(zone_states.values())).timestamp
-                current_hour = simulation_time.hour
-                
-                # Execute decision cycle on hour boundaries
-                if current_hour != self._last_hour_processed:
-                    self._execute_decision_cycle(simulation_time, zone_states)
-                    self._last_hour_processed = current_hour
-                
-                # Sleep to avoid busy waiting
-                time.sleep(1.0)
-                
-            except Exception as e:
-                self.logger.log_exception(
-                    component="baseline_runner",
-                    exception_type=type(e).__name__,
-                    message=str(e),
-                    stack_trace="",
-                    context={"location": "decision_loop"}
-                )
-                time.sleep(1.0)  # Continue despite errors
+        try:
+            if not self._simulation_active or not self.bridge.is_initialized():
+                return
+
+            exchange = self.bridge._api.exchange
+            if exchange.warmup_flag(state):
+                return
+
+            interval_hours = self.config.simulation.decision_interval_hours
+            calendar_year = exchange.calendar_year(state)
+            simulation_time = datetime(
+                calendar_year,
+                exchange.month(state),
+                exchange.day_of_month(state),
+                exchange.hour(state),
+            )
+            interval_key = (
+                calendar_year,
+                exchange.day_of_year(state),
+                exchange.hour(state) // interval_hours,
+            )
+            if interval_key == self._last_decision_interval:
+                return
+
+            zone_states = self.cache.read_zone_states()
+            if not zone_states:
+                return
+
+            self._execute_decision_cycle(simulation_time, zone_states)
+            self._last_decision_interval = interval_key
+
+        except Exception as e:
+            self.logger.log_exception(
+                component="baseline_runner",
+                exception_type=type(e).__name__,
+                message=str(e),
+                stack_trace="",
+                context={"location": "decision_callback"}
+            )
     
     def _execute_decision_cycle(
         self,
