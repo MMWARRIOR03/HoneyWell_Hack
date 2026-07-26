@@ -320,14 +320,21 @@ class ResilientLLMClient:
             payload = {
                 "model": self.config.model_name,
                 "prompt": prompt,
-                "stream": False  # Get complete response, not streaming
+                "stream": self.config.stream_responses,
+                "format": "json",
+                "options": {
+                    "num_predict": self.config.max_output_tokens,
+                    "temperature": 0
+                }
             }
             
             self.logger.debug(component="llm_client",
                 event="http_request",
                 url=generate_url,
                 model=self.config.model_name,
-                timeout=self.config.timeout_seconds
+                timeout=self.config.timeout_seconds,
+                stream=self.config.stream_responses,
+                max_output_tokens=self.config.max_output_tokens
             )
             
             # Send POST request with timeout
@@ -335,6 +342,7 @@ class ResilientLLMClient:
                 generate_url,
                 json=payload,
                 timeout=self.config.timeout_seconds,
+                stream=self.config.stream_responses,
                 verify=False  # Skip SSL verification for testing endpoints (ngrok/cloudflare tunnels)
             )
             
@@ -343,21 +351,47 @@ class ResilientLLMClient:
             
             elapsed_ms = (time.time() - start_time) * 1000
             
-            # Parse response JSON
-            try:
-                response_json = response.json()
-            except json.JSONDecodeError as e:
-                self.logger.error(component="llm_client",
-                    event="malformed_response",
-                    error="Failed to parse response JSON",
-                    response_text=response.text[:500]  # Log first 500 chars
-                )
-                return LLMResponse(
-                    success=False,
-                    decision=None,
-                    error_message=f"Malformed JSON response: {str(e)}",
-                    response_time_ms=round(elapsed_ms, 2)
-                )
+            # Streaming prevents a long, valid generation from looking idle to
+            # requests until Ollama has completed the entire response.
+            if self.config.stream_responses:
+                response_parts = []
+                try:
+                    for line in response.iter_lines(decode_unicode=True):
+                        if not line:
+                            continue
+                        chunk = json.loads(line)
+                        response_parts.append(chunk.get("response", ""))
+                        if chunk.get("done"):
+                            break
+                    response_json = {"response": "".join(response_parts)}
+                except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                    self.logger.error(component="llm_client",
+                        event="malformed_response",
+                        error="Failed to parse streamed response JSON"
+                    )
+                    return LLMResponse(
+                        success=False,
+                        decision=None,
+                        error_message=f"Malformed streamed response: {str(e)}",
+                        response_time_ms=round((time.time() - start_time) * 1000, 2)
+                    )
+            else:
+                try:
+                    response_json = response.json()
+                except json.JSONDecodeError as e:
+                    self.logger.error(component="llm_client",
+                        event="malformed_response",
+                        error="Failed to parse response JSON",
+                        response_text=response.text[:500]  # Log first 500 chars
+                    )
+                    return LLMResponse(
+                        success=False,
+                        decision=None,
+                        error_message=f"Malformed JSON response: {str(e)}",
+                        response_time_ms=round(elapsed_ms, 2)
+                    )
+
+            elapsed_ms = (time.time() - start_time) * 1000
             
             # Extract generated text from Ollama response format
             if "response" not in response_json:

@@ -29,8 +29,14 @@ from typing import Dict, Optional
 try:
     from pyenergyplus.api import EnergyPlusAPI
 except ImportError:
-    print("Error: pyenergyplus not installed. Install with: pip install pyenergyplus")
-    sys.exit(1)
+    # The macOS EnergyPlus installer ships pyenergyplus alongside the app,
+    # rather than installing it into every active Python environment.
+    sys.path.insert(0, "/Applications/EnergyPlus-26-1-0")
+    try:
+        from pyenergyplus.api import EnergyPlusAPI
+    except ImportError:
+        print("Error: pyenergyplus not installed. Install EnergyPlus or add its Python API to this environment.")
+        sys.exit(1)
 
 # Import system components
 from src.eco_loop_building_agents.decision_cache import DecisionCache
@@ -410,20 +416,17 @@ class BaselineRunner:
     
     def _log_energy_metrics(self, simulation_time: datetime) -> None:
         """
-        Log energy metrics placeholder.
-        
-        In production, this would read actual meter values from EnergyPlus.
-        For now, we log placeholder values to maintain log format consistency.
+        Log cumulative energy metrics read from EnergyPlus meters.
         
         Args:
             simulation_time: Current simulation timestamp
         """
-        # Placeholder metrics - in production, read from EnergyPlus meters
+        metrics = self.bridge.get_energy_metrics()
         self.logger.log_energy_metrics(
             simulation_time=simulation_time,
-            hvac_energy_kwh=0.0,
-            lighting_energy_kwh=0.0,
-            total_energy_kwh=0.0
+            hvac_energy_kwh=metrics["hvac_energy_kwh"],
+            lighting_energy_kwh=metrics["lighting_energy_kwh"],
+            total_energy_kwh=metrics["total_energy_kwh"]
         )
     
     def _log_simulation_end(self) -> None:

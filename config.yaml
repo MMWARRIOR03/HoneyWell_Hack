@@ -15,13 +15,13 @@ llm:
   # Base URL for Ollama API endpoint
   # Default for local: http://localhost:11434
   # For Colab: Update to your ngrok or Colab forwarding URL
-  endpoint_url: "https://shoulder-ipod-dpi-minimal.trycloudflare.com"
+  endpoint_url: "https://employ-appointments-monthly-wines.trycloudflare.com"
   
   # Model name to use for inference
   model_name: "qwen2.5:7b"
   
-  # Maximum time to wait for LLM response before timeout (seconds)
-  timeout_seconds: 30.0
+  # Maximum idle time while waiting for an LLM response chunk (seconds)
+  timeout_seconds: 630.0
   
   # Maximum number of retry attempts for failed requests
   max_retries: 3
@@ -32,6 +32,11 @@ llm:
   
   # Timeout for health check requests (seconds)
   health_check_timeout: 5.0
+
+  # Bound the JSON response for the 20-zone control request and stream chunks
+  # so long generations do not appear idle to the HTTP client.
+  max_output_tokens: 1024
+  stream_responses: true
 
 
 # Safety Bounds Configuration
@@ -74,6 +79,10 @@ simulation:
   # Hours between control decision cycles
   # Recommended: 1 (hourly decisions)
   decision_interval_hours: 1
+
+  # AI uses a 24-hour receding horizon: one validated AI decision is held
+  # between daily updates, while EnergyPlus continues to simulate hourly.
+  ai_decision_interval_hours: 24
 
 
 # Logging Configuration

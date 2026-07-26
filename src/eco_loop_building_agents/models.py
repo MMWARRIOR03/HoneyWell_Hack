@@ -133,6 +133,8 @@ class LLMConfig:
     max_retries: int = 3
     backoff_base: float = 2.0
     health_check_timeout: float = 5.0
+    max_output_tokens: int = 1024
+    stream_responses: bool = False
     
     def __post_init__(self):
         """Validate LLM configuration values."""
@@ -144,6 +146,8 @@ class LLMConfig:
             raise ValueError("backoff_base must be greater than 1")
         if self.health_check_timeout <= 0:
             raise ValueError("health_check_timeout must be positive")
+        if self.max_output_tokens <= 0:
+            raise ValueError("max_output_tokens must be positive")
         if not self.endpoint_url:
             raise ValueError("endpoint_url cannot be empty")
         if not self.model_name:
@@ -225,16 +229,20 @@ class SimulationConfig:
     Attributes:
         idf_path: Path to the IDF building model file
         epw_path: Path to the EPW weather file
-        decision_interval_hours: Hours between control decision cycles
+        decision_interval_hours: Hours between baseline control cycles
+        ai_decision_interval_hours: Hours between AI control decisions
     """
     idf_path: str = "./models/baseline.idf"
     epw_path: str = "./weather/IND_New.Delhi.432950_ISHRAE.epw"
     decision_interval_hours: int = 1
+    ai_decision_interval_hours: int = 24
     
     def __post_init__(self):
         """Validate simulation configuration values."""
         if self.decision_interval_hours <= 0:
             raise ValueError("decision_interval_hours must be positive")
+        if self.ai_decision_interval_hours <= 0:
+            raise ValueError("ai_decision_interval_hours must be positive")
 
 
 @dataclass

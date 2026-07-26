@@ -60,6 +60,23 @@ class EnergyPlusBridge:
         self._zone_ids: list[str] = []
         self._actuator_handles: Dict[str, Dict[str, int]] = {}
         self._output_variable_handles: Dict[str, Dict[str, int]] = {}
+        self._meter_handles: Dict[str, int] = {}
+        self._meter_names = (
+            "Electricity:Facility", "NaturalGas:Facility",
+            "InteriorLights:Electricity", "ExteriorLights:Electricity",
+            "InteriorLights:NaturalGas", "ExteriorLights:NaturalGas",
+            "Fans:Electricity", "Pumps:Electricity", "Heating:Electricity",
+            "Cooling:Electricity", "HeatRejection:Electricity",
+            "Humidifier:Electricity", "HeatRecovery:Electricity",
+            "Fans:NaturalGas", "Pumps:NaturalGas", "Heating:NaturalGas",
+            "Cooling:NaturalGas", "HeatRejection:NaturalGas",
+            "Humidifier:NaturalGas", "HeatRecovery:NaturalGas",
+        )
+        self._energy_metrics: Dict[str, float] = {
+            "hvac_energy_kwh": 0.0,
+            "lighting_energy_kwh": 0.0,
+            "total_energy_kwh": 0.0,
+        }
         self._initialized = False
         self._api = None  # Store API reference for v26.1 compatibility
         self._api_ready_wait_logged = False
@@ -89,6 +106,10 @@ class EnergyPlusBridge:
             api.runtime.callback_begin_zone_timestep_after_init_heat_balance(
                 state,
                 self._callback_zone_timestep
+            )
+            api.runtime.callback_end_zone_timestep_after_zone_reporting(
+                state,
+                self._callback_energy_timestep
             )
             
             self.logger.info(
@@ -181,6 +202,7 @@ Plus state handle (integer in v26.1+)
             self._zone_ids.clear()
             self._actuator_handles.clear()
             self._output_variable_handles.clear()
+            self._meter_handles.clear()
 
             # For EnergyPlus v26.1+, state is just an integer handle
             # We need to use the API's data_transfer methods to get zone information
@@ -207,6 +229,23 @@ Plus state handle (integer in v26.1+)
                 "initializing_handles",
                 note="Using default zone list for EnergyPlus v26.1+",
                 num_zones=len(default_zones)
+            )
+
+            # Meter values exposed by the EnergyPlus API are the energy for
+            # the current timestep in joules, not cumulative readings.  Keep
+            # handles here and accumulate them in the end-of-timestep callback.
+            # Missing optional end-use meters are tolerated; facility meters
+            # remain the authoritative total-energy measurement.
+            for meter_name in self._meter_names:
+                handle = self._api.exchange.get_meter_handle(state, meter_name)
+                if handle != -1:
+                    self._meter_handles[meter_name] = handle
+
+            self.logger.info(
+                "ep_bridge",
+                "meter_handles_initialized",
+                meter_count=len(self._meter_handles),
+                meters=sorted(self._meter_handles),
             )
             
             # For each zone, try to get handles
@@ -306,6 +345,68 @@ Plus state handle (integer in v26.1+)
             )
             # Re-raise as initialization failure is critical
             raise
+
+    def _callback_energy_timestep(self, state: Any) -> None:
+        """Accumulate EnergyPlus meter values after each reported zone timestep."""
+        try:
+            if not self._initialized or self._api.exchange.warmup_flag(state):
+                return
+
+            # Some facility-level meters are registered only after EnergyPlus
+            # leaves sizing and enters the run period.  Retry unresolved
+            # handles here instead of permanently treating them as absent.
+            for meter_name in self._meter_names:
+                if meter_name not in self._meter_handles:
+                    handle = self._api.exchange.get_meter_handle(state, meter_name)
+                    if handle != -1:
+                        self._meter_handles[meter_name] = handle
+                        self.logger.info(
+                            "ep_bridge",
+                            "meter_handle_obtained_late",
+                            meter=meter_name,
+                        )
+
+            joules_per_kwh = 3_600_000.0
+
+            def meter_kwh(*names: str) -> float:
+                return sum(
+                    self._api.exchange.get_meter_value(state, self._meter_handles[name])
+                    / joules_per_kwh
+                    for name in names
+                    if name in self._meter_handles
+                )
+
+            # Facility meters avoid double counting all end uses.  HVAC and
+            # lighting are separately reported end-use subsets for comparison.
+            facility_kwh = meter_kwh("Electricity:Facility", "NaturalGas:Facility")
+            lighting_kwh = meter_kwh(
+                "InteriorLights:Electricity", "ExteriorLights:Electricity",
+                "InteriorLights:NaturalGas", "ExteriorLights:NaturalGas",
+            )
+            hvac_kwh = meter_kwh(
+                "Fans:Electricity", "Pumps:Electricity", "Heating:Electricity",
+                "Cooling:Electricity", "HeatRejection:Electricity",
+                "Humidifier:Electricity", "HeatRecovery:Electricity",
+                "Fans:NaturalGas", "Pumps:NaturalGas", "Heating:NaturalGas",
+                "Cooling:NaturalGas", "HeatRejection:NaturalGas",
+                "Humidifier:NaturalGas", "HeatRecovery:NaturalGas",
+            )
+
+            self._energy_metrics["total_energy_kwh"] += facility_kwh
+            self._energy_metrics["lighting_energy_kwh"] += lighting_kwh
+            self._energy_metrics["hvac_energy_kwh"] += hvac_kwh
+        except Exception as e:
+            self.logger.log_exception(
+                "ep_bridge",
+                type(e).__name__,
+                str(e),
+                traceback.format_exc(),
+                {"context": "callback_energy_timestep"},
+            )
+
+    def get_energy_metrics(self) -> Dict[str, float]:
+        """Return cumulative EnergyPlus-derived energy values in kWh."""
+        return dict(self._energy_metrics)
     
     def _extract_and_cache_zone_states(self, state: Any) -> None:
         """

@@ -166,7 +166,8 @@ class OrchestrationLoop:
         self._simulation_start_time: Optional[datetime] = None
         self._last_decision_time: Optional[datetime] = None
         
-        # Mock energy metrics storage (will be replaced with EnergyPlus integration)
+        # Cumulative energy metrics.  The EnergyPlus runner updates these from
+        # real meter readings before each decision cycle.
         self._energy_metrics = {
             "hvac_energy_kwh": 0.0,
             "lighting_energy_kwh": 0.0,
@@ -323,33 +324,24 @@ class OrchestrationLoop:
         )
         
         try:
-            # Step 1: Check LLM health before requesting decision
-            llm_healthy = self.llm_client.health_check()
+            # Submit the actual request directly.  A short /api/tags probe can
+            # time out while a single-GPU Ollama server is busy, even though it
+            # can successfully complete the control request.  The request
+            # client already has the configured timeout and retry policy.
+            llm_response = self.llm_client.request_control_decision(
+                zone_states=zone_states,
+                energy_metrics=self._energy_metrics,
+                simulation_time=simulation_time
+            )
+
+            # Log LLM response
+            self.logger.log_llm_response(
+                success=llm_response.success,
+                response_time_ms=llm_response.response_time_ms,
+                error_message=llm_response.error_message
+            )
             
-            # Step 2: Request control decision from LLM
-            if llm_healthy:
-                llm_response = self.llm_client.request_control_decision(
-                    zone_states=zone_states,
-                    energy_metrics=self._energy_metrics,
-                    simulation_time=simulation_time
-                )
-                
-                # Log LLM response
-                self.logger.log_llm_response(
-                    success=llm_response.success,
-                    response_time_ms=llm_response.response_time_ms,
-                    error_message=llm_response.error_message
-                )
-            else:
-                # LLM unhealthy - create failure response
-                llm_response = self._create_failure_response("LLM health check failed")
-                self.logger.warning(
-                    component="orchestration_loop",
-                    event="llm_unhealthy_skipping_request",
-                    simulation_time=simulation_time.isoformat()
-                )
-            
-            # Step 3: Validate through Safety Governor (handles fallback if needed)
+            # Step 2: Validate through Safety Governor (handles genuine failures)
             validated_decisions = self.governor.validate_and_apply(
                 llm_response=llm_response,
                 zone_states=zone_states
@@ -359,10 +351,7 @@ class OrchestrationLoop:
             for decision in validated_decisions.values():
                 self.cache.write_decision(decision)
             
-            # Step 5: Update energy metrics (mock - will be read from EnergyPlus in production)
-            self._update_energy_metrics(simulation_time)
-            
-            # Step 6: Log energy metrics
+            # Step 5: Log energy metrics supplied by the simulation bridge.
             self.logger.log_energy_metrics(
                 simulation_time=simulation_time,
                 hvac_energy_kwh=self._energy_metrics["hvac_energy_kwh"],
@@ -370,7 +359,7 @@ class OrchestrationLoop:
                 total_energy_kwh=self._energy_metrics["total_energy_kwh"]
             )
             
-            # Step 7: Log system health state
+            # Step 6: Log system health state
             self.logger.info(
                 component="orchestration_loop",
                 event="decision_cycle_complete",
@@ -426,26 +415,17 @@ class OrchestrationLoop:
             response_time_ms=0.0
         )
     
-    def _update_energy_metrics(self, simulation_time: datetime) -> None:
-        """
-        Update energy metrics (mock implementation).
-        
-        In production, this would read meter values from EnergyPlus.
-        For now, we simulate increasing energy consumption over time.
-        
-        Args:
-            simulation_time: Current simulation timestamp
-        """
-        # Mock: Increment energy by small amounts each cycle
-        # In reality, this would query EnergyPlus meter outputs
-        self._energy_metrics["hvac_energy_kwh"] += 0.5
-        self._energy_metrics["lighting_energy_kwh"] += 0.2
-        self._energy_metrics["total_energy_kwh"] = (
-            self._energy_metrics["hvac_energy_kwh"] +
-            self._energy_metrics["lighting_energy_kwh"]
-        )
-        
-        # Update MCP server with latest metrics
+    def update_energy_metrics(self, energy_metrics: Dict[str, float]) -> None:
+        """Store cumulative EnergyPlus meter readings for prompts and logging."""
+        required_keys = {"hvac_energy_kwh", "lighting_energy_kwh", "total_energy_kwh"}
+        missing_keys = required_keys.difference(energy_metrics)
+        if missing_keys:
+            raise ValueError(f"Missing energy metrics: {sorted(missing_keys)}")
+
+        self._energy_metrics = {
+            key: float(energy_metrics[key])
+            for key in required_keys
+        }
         self.mcp_server.update_energy_metrics(
             hvac_energy_kwh=self._energy_metrics["hvac_energy_kwh"],
             lighting_energy_kwh=self._energy_metrics["lighting_energy_kwh"]

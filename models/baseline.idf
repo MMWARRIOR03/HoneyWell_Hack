@@ -7748,6 +7748,16 @@
 !    Output:Meter,WaterSystems:NaturalGas,Hourly;
 !-   ===========  ALL OBJECTS IN CLASS: REPORT ===========
 
+  ! Required by the Python EnergyPlus API for the cumulative facility-energy
+  ! values consumed by the baseline and AI structured logs.
+  Output:Meter,
+    Electricity:Facility,
+    Timestep;
+
+  Output:Meter,
+    NaturalGas:Facility,
+    Timestep;
+
   Output:Surfaces:Drawing,DXF;
 
   Output:Surfaces:List,Details;

@@ -110,6 +110,8 @@ class ConfigurationManager:
             max_retries=int(llm_dict.get("max_retries", 3)),
             backoff_base=float(llm_dict.get("backoff_base", 2.0)),
             health_check_timeout=float(llm_dict.get("health_check_timeout", 5.0)),
+            max_output_tokens=int(llm_dict.get("max_output_tokens", 1024)),
+            stream_responses=bool(llm_dict.get("stream_responses", False)),
         )
     
     def _build_safety_config(self) -> SafetyConfig:
@@ -132,6 +134,7 @@ class ConfigurationManager:
             idf_path=sim_dict.get("idf_path", "./models/baseline.idf"),
             epw_path=sim_dict.get("epw_path", "./weather/IND_New.Delhi.432950_ISHRAE.epw"),
             decision_interval_hours=int(sim_dict.get("decision_interval_hours", 1)),
+            ai_decision_interval_hours=int(sim_dict.get("ai_decision_interval_hours", 24)),
         )
     
     def _build_logging_config(self) -> LoggingConfig:
@@ -212,6 +215,8 @@ class ConfigurationManager:
             f"  Model: {config.llm.model_name}",
             f"  Timeout: {config.llm.timeout_seconds}s",
             f"  Max Retries: {config.llm.max_retries}",
+            f"  Max Output Tokens: {config.llm.max_output_tokens}",
+            f"  Streaming: {config.llm.stream_responses}",
             "",
             "[Safety Bounds]",
             f"  Heating Range: {config.safety.min_heating_setpoint}°C - {config.safety.max_heating_setpoint}°C",
@@ -223,6 +228,7 @@ class ConfigurationManager:
             f"  IDF Path: {config.simulation.idf_path}",
             f"  EPW Path: {config.simulation.epw_path}",
             f"  Decision Interval: {config.simulation.decision_interval_hours} hour(s)",
+            f"  AI Decision Interval: {config.simulation.ai_decision_interval_hours} hour(s)",
             "",
             "[Logging]",
             f"  Log Directory: {config.logging.log_dir}",

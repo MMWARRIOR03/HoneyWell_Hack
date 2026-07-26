@@ -16,7 +16,6 @@ validates all components work together in simulation mode.
 """
 
 import sys
-import os
 from pathlib import Path
 from datetime import datetime
 import traceback
@@ -32,6 +31,8 @@ from eco_loop_building_agents.models import ZoneState
 def check_pyenergyplus_available():
     """Check if pyenergyplus is available for EnergyPlus integration."""
     try:
+        # Add EnergyPlus installation path for pyenergyplus module
+        sys.path.insert(0, "/Applications/EnergyPlus-26-1-0")
         import pyenergyplus
         return True
     except ImportError:
@@ -47,7 +48,8 @@ def run_energyplus_simulation(config_path: str = "config.yaml"):
     Args:
         config_path: Path to configuration file
     """
-    import pyenergyplus.api as ep_api
+    # Add EnergyPlus installation path for pyenergyplus module
+    sys.path.insert(0, "/Applications/EnergyPlus-26-1-0")
     from pyenergyplus.api import EnergyPlusAPI
     
     print("\n" + "=" * 80)
@@ -96,35 +98,88 @@ def run_energyplus_simulation(config_path: str = "config.yaml"):
         ep_bridge.register_callbacks(api, state)
         print("    ✓ Callbacks registered")
         
-        # Set up callback for decision cycles
-        decision_interval_hours = orchestration.config.simulation.decision_interval_hours
-        last_decision_hour = [-1]  # Mutable container for closure
-        
+        # Daily receding-horizon mode makes one real AI decision per 24-hour
+        # simulated window and holds that validated decision until the next
+        # daily update.  This keeps chronological control without requiring
+        # 8,760 blocking LLM calls for a one-year simulation.
+        ai_horizon_hours = orchestration.config.simulation.ai_decision_interval_hours
+        last_ai_interval = [None]
+        ai_decision_count = [0]
+        run_calendar_year = [None]
+        rollover_skip_logged = [False]
         def decision_cycle_callback(state_arg):
-            """Callback to trigger decision cycles at hourly intervals."""
+            """Schedule a decision from the EnergyPlus simulated calendar."""
             try:
-                # Get current simulation hour
-                current_hour = state_arg.dataGlobal.HourOfDay
-                
-                # Check if we're at a new decision interval
-                if current_hour != last_decision_hour[0] and current_hour % decision_interval_hours == 0:
-                    last_decision_hour[0] = current_hour
-                    
-                    # Get current simulation time
-                    month = state_arg.dataEnvrn.Month
-                    day_of_month = state_arg.dataEnvrn.DayOfMonth
-                    year = state_arg.dataEnvrn.Year
-                    
-                    simulation_time = datetime(
-                        year=year if year > 0 else 2024,
-                        month=month,
-                        day=day_of_month,
-                        hour=current_hour
-                    )
-                    
-                    # Execute decision cycle
-                    orchestration.execute_decision_cycle(simulation_time)
-                    
+                if not ep_bridge.is_initialized():
+                    return
+
+                exchange = api.exchange
+                if exchange.warmup_flag(state_arg):
+                    return
+
+                calendar_year = exchange.calendar_year(state_arg)
+                if run_calendar_year[0] is None:
+                    run_calendar_year[0] = calendar_year
+                elif calendar_year != run_calendar_year[0]:
+                    # EnergyPlus invokes this callback once more while it
+                    # advances the reporting clock past a one-year run.  That
+                    # rollover is not an operating timestep and must not add
+                    # a 8,761st baseline decision.
+                    if not rollover_skip_logged[0]:
+                        orchestration.logger.info(
+                            component="run_end_to_end_simulation",
+                            event="post_run_rollover_skipped",
+                            simulation_time=f"{calendar_year}-01-01T00:00:00",
+                            run_calendar_year=run_calendar_year[0]
+                        )
+                        rollover_skip_logged[0] = True
+                    return
+
+                current_hour = exchange.hour(state_arg)
+                simulation_time = datetime(
+                    calendar_year,
+                    exchange.month(state_arg),
+                    exchange.day_of_month(state_arg),
+                    current_hour
+                )
+                interval_key = (
+                    calendar_year,
+                    exchange.day_of_year(state_arg),
+                    current_hour // ai_horizon_hours,
+                )
+                if interval_key == last_ai_interval[0]:
+                    return
+
+                zone_states = orchestration.cache.read_zone_states()
+                if not zone_states:
+                    return
+
+                # Baseline values provide a fail-safe while the AI request is
+                # made.  Successful AI values replace them and persist through
+                # the remainder of this horizon.
+                for decision in orchestration.baseline.get_control_decision(
+                    zone_states,
+                    simulation_time,
+                ).values():
+                    orchestration.cache.write_decision(decision)
+
+                orchestration.update_energy_metrics(ep_bridge.get_energy_metrics())
+                decisions = orchestration.execute_decision_cycle(
+                    simulation_time,
+                    zone_states,
+                )
+
+                last_ai_interval[0] = interval_key
+                ai_decision_count[0] += 1
+                orchestration.logger.info(
+                    component="run_end_to_end_simulation",
+                    event="ai_horizon_complete",
+                    simulation_time=simulation_time.isoformat(),
+                    zone_count=len(zone_states),
+                    ai_decision_count=ai_decision_count[0],
+                    horizon_hours=ai_horizon_hours,
+                    decision_sources=sorted({decision.source for decision in decisions.values()}),
+                )
             except Exception as e:
                 orchestration.logger.log_exception(
                     "run_end_to_end_simulation",
@@ -134,12 +189,14 @@ def run_energyplus_simulation(config_path: str = "config.yaml"):
                     {"context": "decision_cycle_callback"}
                 )
         
-        # Register decision cycle callback
-        state.callback_begin_zone_timestep_after_init_heat_balance(
+        # Run after zone reporting, after the bridge has cached the latest state.
+        api.runtime.callback_end_zone_timestep_after_zone_reporting(
+            state,
             decision_cycle_callback
         )
         
-        print(f"    ✓ Decision cycles configured (every {decision_interval_hours} hour(s))")
+        print(f"    ✓ AI receding horizon configured (every {ai_horizon_hours} hour(s))")
+        print("    ✓ Each validated AI decision is held until the next daily update")
         
         # Run simulation
         print("\n[5/5] Running Simulation...")
@@ -163,7 +220,8 @@ def run_energyplus_simulation(config_path: str = "config.yaml"):
             status = orchestration.get_system_status()
             print(f"\nSystem Status:")
             print(f"  Health State: {status['health_state']}")
-            print(f"  Decision Cycles Completed: {status['decision_cycles_completed']}")
+            print(f"  AI Horizons Applied: {ai_decision_count[0]}")
+            print(f"  AI Decision Cycles Completed: {status['decision_cycles_completed']}")
             print(f"  Consecutive LLM Failures: {status['consecutive_failures']}")
             print(f"  Total Energy (kWh): {status['energy_metrics']['total_energy_kwh']:.2f}")
             print(f"  HVAC Energy (kWh): {status['energy_metrics']['hvac_energy_kwh']:.2f}")

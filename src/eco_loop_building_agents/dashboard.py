@@ -110,6 +110,7 @@ class ComparisonDashboard:
         energy_hvac = []
         energy_lighting = []
         energy_total = []
+        simulation_year: Optional[int] = None
         pmv_values: Dict[str, List[float]] = {}
         pmv_timestamps: Dict[str, List[datetime]] = {}
         fallback_events = []
@@ -131,10 +132,31 @@ class ComparisonDashboard:
                 if event == "energy_metrics":
                     sim_time_str = entry.get("simulation_time")
                     if sim_time_str:
-                        timestamps.append(datetime.fromisoformat(sim_time_str.replace('Z', '')))
-                        energy_hvac.append(entry.get("hvac_energy_kwh", 0.0))
-                        energy_lighting.append(entry.get("lighting_energy_kwh", 0.0))
-                        energy_total.append(entry.get("total_energy_kwh", 0.0))
+                        simulation_time = datetime.fromisoformat(
+                            sim_time_str.replace('Z', '')
+                        )
+                        # EnergyPlus can emit one reporting record after a
+                        # one-year run rolls into the following calendar year.
+                        # Keep the first run-period year for a coherent chart.
+                        if simulation_year is None:
+                            simulation_year = simulation_time.year
+                        elif simulation_time.year != simulation_year:
+                            continue
+                        hvac_kwh = float(entry.get("hvac_energy_kwh", 0.0))
+                        lighting_kwh = float(entry.get("lighting_energy_kwh", 0.0))
+                        reported_total_kwh = float(entry.get("total_energy_kwh", 0.0))
+                        # Historical logs wrote a placeholder zero for total
+                        # energy even when component meters were populated.
+                        # Reconstruct it so comparisons remain meaningful.
+                        total_kwh = (
+                            reported_total_kwh
+                            if reported_total_kwh > 0.0
+                            else hvac_kwh + lighting_kwh
+                        )
+                        timestamps.append(simulation_time)
+                        energy_hvac.append(hvac_kwh)
+                        energy_lighting.append(lighting_kwh)
+                        energy_total.append(total_kwh)
                 
                 # Parse PMV violations and zone states
                 elif event == "pmv_violation":
@@ -143,14 +165,19 @@ class ComparisonDashboard:
                     violation_time_str = entry.get("violation_time")
                     
                     if pmv is not None and violation_time_str:
+                        violation_time = datetime.fromisoformat(
+                            violation_time_str.replace('Z', '')
+                        )
+                        if simulation_year is None:
+                            simulation_year = violation_time.year
+                        elif violation_time.year != simulation_year:
+                            continue
                         if zone not in pmv_values:
                             pmv_values[zone] = []
                             pmv_timestamps[zone] = []
                         
                         pmv_values[zone].append(pmv)
-                        pmv_timestamps[zone].append(
-                            datetime.fromisoformat(violation_time_str.replace('Z', ''))
-                        )
+                        pmv_timestamps[zone].append(violation_time)
                 
                 # Parse zone states from decision cycles for additional PMV data
                 elif event == "decision_cycle_start":
@@ -159,6 +186,10 @@ class ComparisonDashboard:
                     
                     if sim_time_str:
                         sim_time = datetime.fromisoformat(sim_time_str.replace('Z', ''))
+                        if simulation_year is None:
+                            simulation_year = sim_time.year
+                        elif sim_time.year != simulation_year:
+                            continue
                         
                         for zone_id, state in zone_states.items():
                             pmv = state.get("pmv")
@@ -307,10 +338,11 @@ class ComparisonDashboard:
         output_path: str
     ) -> None:
         """
-        Generate PMV scatter plot with ASHRAE 55 comfort bands.
-        
-        Creates a scatter plot showing PMV values over time for both runs,
-        with the ASHRAE 55 comfort band (-0.5 to +0.5) highlighted.
+        Generate a daily aggregate PMV chart with ASHRAE 55 comfort bands.
+
+        All zone readings are averaged within each simulation day.  This
+        keeps the comparison readable and avoids a legend entry for every
+        zone in each scenario.
         
         Args:
             baseline: Parsed baseline simulation results
@@ -318,51 +350,40 @@ class ComparisonDashboard:
             output_path: Path for output PNG file
         """
         fig, ax = plt.subplots(figsize=(12, 6))
-        
-        # Plot ASHRAE 55 comfort band as background
-        if baseline.timestamps or ai.timestamps:
-            all_timestamps = (baseline.timestamps if baseline.timestamps else []) + \
-                           (ai.timestamps if ai.timestamps else [])
-            
-            if all_timestamps:
-                min_time = min(all_timestamps)
-                max_time = max(all_timestamps)
-                
-                ax.axhspan(-0.5, 0.5, alpha=0.2, color='#2ecc71', label='ASHRAE 55 Comfort Band')
-        
-        # Plot baseline PMV values
-        for zone_id, pmv_list in baseline.pmv_values.items():
-            if pmv_list and zone_id in baseline.pmv_timestamps:
-                ax.scatter(
-                    baseline.pmv_timestamps[zone_id],
-                    pmv_list,
-                    label=f'Baseline - {zone_id}',
-                    alpha=0.6,
-                    s=30,
-                    marker='o',
-                    edgecolors='black',
-                    linewidth=0.5
-                )
-        
-        # Plot AI PMV values
-        for zone_id, pmv_list in ai.pmv_values.items():
-            if pmv_list and zone_id in ai.pmv_timestamps:
-                ax.scatter(
-                    ai.pmv_timestamps[zone_id],
-                    pmv_list,
-                    label=f'AI - {zone_id}',
-                    alpha=0.6,
-                    s=30,
-                    marker='s',
-                    edgecolors='black',
-                    linewidth=0.5
-                )
+        baseline_times, baseline_means = self._aggregate_daily_pmv(baseline)
+        ai_times, ai_means = self._aggregate_daily_pmv(ai)
+        all_timestamps = baseline_times + ai_times
+
+        ax.axhspan(
+            -0.5,
+            0.5,
+            alpha=0.2,
+            color='#2ecc71',
+            label='ASHRAE 55 Comfort Band',
+        )
+        if baseline_times:
+            ax.plot(
+                baseline_times,
+                baseline_means,
+                color='#e74c3c',
+                linewidth=2.0,
+                label='Baseline Daily Mean PMV',
+            )
+        if ai_times:
+            ax.plot(
+                ai_times,
+                ai_means,
+                color='#2ecc71',
+                linewidth=2.0,
+                linestyle='--',
+                label='AI Daily Mean PMV',
+            )
         
         ax.set_xlabel('Simulation Time', fontsize=12, fontweight='bold')
         ax.set_ylabel('PMV (Predicted Mean Vote)', fontsize=12, fontweight='bold')
         ax.set_ylim(-1.5, 1.5)
         ax.grid(True, alpha=0.3, linestyle='--')
-        ax.legend(loc='best', fontsize=9, ncol=2)
+        ax.legend(loc='upper right', fontsize=10)
         
         # Format x-axis for datetime
         ax.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d %H:%M'))
@@ -372,7 +393,7 @@ class ComparisonDashboard:
             ax.xaxis.set_major_locator(locator)
         plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha='right')
         
-        plt.title('Thermal Comfort (PMV): Baseline vs AI', fontsize=14, fontweight='bold', pad=20)
+        plt.title('Daily Mean Thermal Comfort (PMV): Baseline vs AI', fontsize=14, fontweight='bold', pad=20)
         plt.tight_layout()
         
         # Export as 300 DPI PNG
@@ -380,6 +401,24 @@ class ComparisonDashboard:
         plt.close(fig)
         
         print(f"Comfort chart saved to: {output_path}")
+
+    def _aggregate_daily_pmv(
+        self,
+        results: SimulationResults,
+    ) -> Tuple[List[datetime], List[float]]:
+        """Return mean PMV across all available zones for each simulation day."""
+        values_by_day: Dict[datetime, List[float]] = {}
+        for zone_id, pmv_values in results.pmv_values.items():
+            timestamps = results.pmv_timestamps.get(zone_id, [])
+            for timestamp, pmv in zip(timestamps, pmv_values):
+                day = timestamp.replace(hour=0, minute=0, second=0, microsecond=0)
+                values_by_day.setdefault(day, []).append(pmv)
+
+        timestamps = sorted(values_by_day)
+        return (
+            timestamps,
+            [sum(values_by_day[timestamp]) / len(values_by_day[timestamp]) for timestamp in timestamps],
+        )
     
     def _calculate_pmv_violations(
         self,
