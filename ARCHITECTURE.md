@@ -8,8 +8,9 @@ The Eco-Loop Building Agents system is a **Production-Ready Physical AI** proof-
 
 ### Proven Results (Full Year Simulation)
 
-✅ **18.78% Energy Savings**: Reduced total energy consumption from 4,239,421 kWh (baseline) to 3,443,409 kWh (AI-driven)  
-✅ **Thermal Comfort Maintained**: Average PMV 0.527 (within ASHRAE 55 comfort zone)  
+✅ **16.44% Energy Savings**: Reduced total energy consumption from 4,239,421 kWh (baseline) to 3,542,564 kWh (AI-driven)  
+✅ **Thermal Comfort Improved**: Average PMV improved from 0.527 to 0.490 (closer to neutral comfort, -0.037 improvement)  
+✅ **6.1% Fewer Comfort Violations**: PMV violations reduced from 101,739 to 95,486 (6,253 fewer violations)  
 ✅ **Zero Downtime**: System operated continuously for 8,760 decision cycles (full year)  
 ✅ **Resilient Operation**: Graceful degradation to rule-based control when LLM unavailable  
 
@@ -26,10 +27,11 @@ This system implements a **Physical AI closed-loop control pipeline** that demon
 
 ### Key Performance Goals
 
-- ✅ **Energy Efficiency**: Achieved 18.78% energy reduction compared to rule-based baseline
-- ✅ **Thermal Comfort**: Maintained ASHRAE 55 standards (PMV -0.5 to +0.5) throughout full year
+- ✅ **Energy Efficiency**: Achieved 16.44% energy reduction (696,857 kWh saved annually) compared to rule-based baseline
+- ✅ **Thermal Comfort**: Improved average PMV from 0.527 to 0.490 (closer to neutral comfort within ASHRAE 55 standards: -0.5 to +0.5)
+- ✅ **Comfort Violations**: Reduced PMV violations by 6.1% (6,253 fewer violations across full year)
 - ✅ **Resilience**: Survived 8,760 hourly decision cycles with graceful fallback behavior
-- ✅ **Safety**: Zero comfort violations during AI failures through automatic fallback to baseline control
+- ✅ **Safety**: Zero simulation crashes through automatic fallback to baseline control
 
 ## System Context Diagram
 
@@ -832,21 +834,22 @@ src/eco_loop_building_agents/
 
 1. **Energy Consumption Comparison** (`*_energy.png`):
    - Baseline: 4,239,421 kWh (full year)
-   - AI-Driven: 3,443,409 kWh (full year)
-   - **Savings: 18.78% (796,012 kWh)**
+   - AI-Driven: 3,542,564 kWh (full year)
+   - **Savings: 16.44% (696,857 kWh)**
 
 2. **PMV Comfort Comparison** (`*_pmv.png`):
    - Baseline Average PMV: 0.527
-   - AI-Driven Average PMV: 0.527
-   - **Thermal comfort maintained throughout optimization**
+   - AI-Driven Average PMV: 0.490
+   - **Thermal comfort improved by 0.037 (closer to neutral)**
+   - **PMV violations reduced by 6.1%** (6,253 fewer violations: 101,739 → 95,486)
 
 3. **Summary Statistics** (`*_summary.csv`):
    ```csv
    Metric,Baseline (Rule-Based),AI-Driven Control,Difference
-   Total Energy (kWh),4239421.18,3443409.23,796011.95
-   Energy Savings (%),-,18.78%,-
-   Average PMV,0.527,0.527,0.000
-   PMV Violations (count),101739,101739,0
+   Total Energy (kWh),4239421.18,3542563.78,696857.40
+   Energy Savings (%),-,16.44%,-
+   Average PMV,0.527,0.490,-0.037
+   PMV Violations (count),101739,95486,-6253
    Fallback Activations,N/A,0,-
    ```
 
@@ -924,17 +927,17 @@ src/eco_loop_building_agents/
 
 | Metric | Baseline (Rule-Based) | AI-Driven Control | Improvement |
 |--------|----------------------|-------------------|-------------|
-| **Total Energy Consumption** | 4,239,421 kWh | 3,443,409 kWh | **-18.78%** |
-| **HVAC Energy** | 3,500,000 kWh (est) | 2,850,000 kWh (est) | **-18.6%** |
-| **Lighting Energy** | 739,421 kWh (est) | 593,409 kWh (est) | **-19.8%** |
+| **Total Energy Consumption** | 4,239,421 kWh | 3,542,564 kWh | **-16.44%** |
+| **HVAC Energy** | 3,500,000 kWh (est) | 2,924,000 kWh (est) | **-16.5%** |
+| **Lighting Energy** | 739,421 kWh (est) | 618,564 kWh (est) | **-16.3%** |
 | **Peak Demand** | TBD | TBD | TBD |
 
 ### Thermal Comfort Metrics
 
 | Metric | Baseline | AI-Driven | Status |
 |--------|----------|-----------|--------|
-| **Average PMV** | 0.527 | 0.527 | ✅ Maintained |
-| **PMV Violations** | 101,739 | 101,739 | ✅ No increase |
+| **Average PMV** | 0.527 | 0.490 | ✅ **Improved** |
+| **PMV Violations** | 101,739 | 95,486 | ✅ **6.1% reduction** |
 | **Comfort Band** | -0.5 to +0.5 | -0.5 to +0.5 | ✅ ASHRAE 55 |
 | **Zone Temperature Range** | 20-26°C | 20-26°C | ✅ Within bounds |
 
@@ -1182,8 +1185,8 @@ The Eco-Loop Building Agents system demonstrates a **production-ready Physical A
 ✅ **Closed-Loop Execution**: Continuous feedback → reasoning → control → injection  
 
 **Key Achievements**:
-- **18.78% energy savings** proven through full-year simulation
-- **Zero thermal comfort degradation** (PMV maintained within ASHRAE 55)
+- **16.44% energy savings** proven through full-year simulation (696,857 kWh annually)
+- **Thermal comfort improved** (PMV: 0.527 → 0.490, 6.1% fewer violations)
 - **Resilient operation** through graceful degradation and automatic fallback
 - **Complete implementation** with 13 modules, comprehensive tests, and documentation
 
