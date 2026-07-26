@@ -93,7 +93,7 @@ def run_energyplus_simulation(config_path: str = "config.yaml"):
         state = api.state_manager.new_state()
         
         # Register callbacks
-        ep_bridge.register_callbacks(state)
+        ep_bridge.register_callbacks(api, state)
         print("    ✓ Callbacks registered")
         
         # Set up callback for decision cycles

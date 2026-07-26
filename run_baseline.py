@@ -208,7 +208,7 @@ class BaselineRunner:
             state = api.state_manager.new_state()
             
             # Register EnergyPlus callbacks
-            self.bridge.register_callbacks(state)
+            self.bridge.register_callbacks(api, state)
             
             # Start decision cycle thread
             self._simulation_active = True
